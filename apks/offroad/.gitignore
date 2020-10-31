@@ -1,0 +1,17 @@
+# Node
+node_modules/
+.expo/
+npm-debug.*
+
+# Android
+build/
+.idea
+.gradle
+local.properties
+*.iml
+
+# Metro
+metro.config.js
+
+# macOS
+.DS_Store
