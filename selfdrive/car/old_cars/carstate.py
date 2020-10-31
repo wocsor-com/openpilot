@@ -15,6 +15,7 @@ class CarState(CarStateBase):
     self.buttonStates = BUTTON_STATES.copy()
     self.cruise_engaged = False
     self.cruise_button_last = False
+    self.cruise_speed = 0
 
   def update(self, cp, cp_cam):
     ret = car.CarState.new_message()
@@ -71,17 +72,24 @@ class CarState(CarStateBase):
 
     if cruise_button and not self.cruise_button_last:
       self.cruise_engaged = not self.cruise_engaged
+      self.cruise_speed = ret.vEgo
 
     self.cruise_button_last = cruise_button
 
+    if self.cruise_engaged:
+      if bool(cp.vl["CRUISE_BUTTONS"]['SET_PLUS']):
+        self.cruise_speed += 5 * CV.MPH_TO_MS
+      if bool(cp.vl["CRUISE_BUTTONS"]['SET_MINUS']):
+        self.cruise_speed -= 5 * CV.MPH_TO_MS
+
+    if not self.cruise_engaged or self.cruise_speed < 0:
+      self.cruise_speed = 0
+    if self.cruise_speed < 65 * CV.MS_TO_MPH
+      self.cruise_speed = 65
+
     ret.cruiseState.enabled = self.cruise_engaged
-    
-    if ret.cruiseState.enabled:
-      self.buttonStates["accelCruise"] = bool(cp.vl["CRUISE_BUTTONS"]['SET_PLUS'])
-      self.buttonStates["decelCruise"] = bool(cp.vl["CRUISE_BUTTONS"]['SET_MINUS'])
-    else:
-      self.buttonStates["setCruise"] = bool(cp.vl["CRUISE_BUTTONS"]['SET_MINUS']) 
-      self.buttonStates["resumeCruise"] = bool(cp.vl["CRUISE_BUTTONS"]['SET_PLUS'])
+    ret.cruiseState.speed = self.cruise_speed
+
 
     gear = cp.vl["GEAR_PACKET"]['GEAR']
     if gear == 0:
