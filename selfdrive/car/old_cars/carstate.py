@@ -49,11 +49,14 @@ class CarState(CarStateBase):
     ret.leftBlinker = False
     ret.rightBlinker = False
 
-    steer_dir = (cp.vl["STEER_TORQUE"]["DIRECTION"] * 2) + 1
+    steer_dir = 1
+    if bool(cp.vl["STEER_TORQUE"]["DIRECTION"]):
+      steer_dir = -1
+      
     tq1 = cp_cam.vl["STEER_SENSOR"]['DRIVER_TORQUE'] - 1680.
     tq2 = cp_cam.vl["STEER_SENSOR"]['MOTOR_DUTY'] - 1615.
 
-    ret.steeringTorque = round((tq1 + (tq2 * -1)) / 4)
+    ret.steeringTorque = (((abs(tq1) + abs(tq2)) / 2) * steer_dir) / 4
     
     ret.steeringTorqueEps = cp.vl["STEER_TORQUE"]['DRIVER_TORQUE'] * steer_dir
 
