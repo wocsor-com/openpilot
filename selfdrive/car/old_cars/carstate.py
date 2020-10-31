@@ -72,23 +72,26 @@ class CarState(CarStateBase):
 
     if cruise_button and not self.cruise_button_last:
       self.cruise_engaged = not self.cruise_engaged
-      self.cruise_speed = ret.vEgo
+      self.cruise_speed = ret.vEgo * CV.MS_TO_MPH
 
     self.cruise_button_last = cruise_button
 
-    if self.cruise_engaged:
-      if bool(cp.vl["CRUISE_BUTTONS"]['SET_PLUS']):
-        self.cruise_speed += 5 * CV.MPH_TO_MS
-      if bool(cp.vl["CRUISE_BUTTONS"]['SET_MINUS']):
-        self.cruise_speed -= 5 * CV.MPH_TO_MS
-
     if not self.cruise_engaged or self.cruise_speed < 0:
       self.cruise_speed = 0
-    if self.cruise_speed < 65 * CV.MS_TO_MPH:
+
+    if self.cruise_engaged:
+      if bool(cp.vl["CRUISE_BUTTONS"]['SET_PLUS']):
+        self.cruise_speed += 5
+      if bool(cp.vl["CRUISE_BUTTONS"]['SET_MINUS']):
+        self.cruise_speed -= 5
+      # round speed to nearest 5MPH
+      self.cruise_speed = 5 * round(self.cruise_speed / 5)
+
+    if self.cruise_speed > 65:
       self.cruise_speed = 65
 
     ret.cruiseState.enabled = self.cruise_engaged
-    ret.cruiseState.speed = self.cruise_speed
+    ret.cruiseState.speed = self.cruise_speed * CV.MPH_TO_MS
 
 
     gear = cp.vl["GEAR_PACKET"]['GEAR']
