@@ -16,6 +16,7 @@ class CarState(CarStateBase):
     self.cruise_engaged = False
     self.cruise_button_last = False
     self.cruise_speed = 0
+    self.btn_press_last = False
 
   def update(self, cp, cp_cam):
     ret = car.CarState.new_message()
@@ -78,14 +79,18 @@ class CarState(CarStateBase):
 
     if not self.cruise_engaged or self.cruise_speed < 0:
       self.cruise_speed = 0
-
-    if self.cruise_engaged:
-      if bool(cp.vl["CRUISE_BUTTONS"]['SET_PLUS']):
-        self.cruise_speed += 5
-      if bool(cp.vl["CRUISE_BUTTONS"]['SET_MINUS']):
-        self.cruise_speed -= 5
-      # round speed to nearest 5MPH
-      self.cruise_speed = 5 * round(self.cruise_speed / 5)
+    
+    btn_press = bool(cp.vl["CRUISE_BUTTONS"]['SET_PLUS']) or bool(cp.vl["CRUISE_BUTTONS"]['SET_MINUS'])
+    if btn_press and not self.btn_press_last:
+      if self.cruise_engaged:
+        if bool(cp.vl["CRUISE_BUTTONS"]['SET_PLUS']):
+          self.cruise_speed += 5
+        if bool(cp.vl["CRUISE_BUTTONS"]['SET_MINUS']):
+          self.cruise_speed -= 5
+        # round speed to nearest 5MPH
+        self.cruise_speed = 5 * round(self.cruise_speed / 5)
+    
+    self.btn_press_last = btn_press
 
     if self.cruise_speed > 65:
       self.cruise_speed = 65
