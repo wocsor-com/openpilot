@@ -84,7 +84,7 @@ class CarState(CarStateBase):
 
     if not self.cruise_engaged or self.cruise_speed < 0:
       self.cruise_speed = 0
-    if self.cruise_speed < 65 * CV.MS_TO_MPH
+    if self.cruise_speed < 65 * CV.MS_TO_MPH:
       self.cruise_speed = 65
 
     ret.cruiseState.enabled = self.cruise_engaged
