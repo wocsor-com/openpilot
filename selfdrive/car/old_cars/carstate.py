@@ -14,7 +14,7 @@ class CarState(CarStateBase):
     can_define = CANDefine(DBC[CP.carFingerprint]['pt'])
     self.buttonStates = BUTTON_STATES.copy()
     self.cruise_engaged = False
-    self.cruise_button_last = 0
+    self.cruise_button_last = False
 
   def update(self, cp, cp_cam):
     ret = car.CarState.new_message()
@@ -64,10 +64,12 @@ class CarState(CarStateBase):
     ret.steeringPressed = abs(ret.steeringTorque) > STEER_THRESHOLD
 
     # cruise magic
+
     ret.cruiseState.available = True # cp.vl["PCM_CRUISE"]['MAIN_ON'] != 0
+
     cruise_button = bool(cp.vl["CRUISE_BUTTONS"]["CANCEL"])
 
-    if cruise_button is not self.cruise_button_last:
+    if cruise_button and not self.cruise_button_last:
       self.cruise_engaged = not self.cruise_engaged
 
     self.cruise_button_last = cruise_button
