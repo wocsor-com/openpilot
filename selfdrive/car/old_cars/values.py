@@ -112,7 +112,7 @@ FW_VERSIONS = {
 STEER_THRESHOLD = 100
 
 DBC = {
-  CAR.CELICA: dbc_dict('toyota_celica_2003_pt', 'toyota_adas'),
+  CAR.CELICA: dbc_dict('ford_transit_connect_2015_WOCSOR', 'toyota_adas'),
 }
 
 NO_DSU_CAR = [CAR.CELICA]
