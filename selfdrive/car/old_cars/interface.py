@@ -2,12 +2,17 @@
 from cereal import car
 from selfdrive.config import Conversions as CV
 from selfdrive.controls.lib.drive_helpers import EventTypes as ET, create_event
-from selfdrive.car.old_cars.values import CAR
+from selfdrive.car.old_cars.values import CAR, BUTTON_STATES
 from selfdrive.car import STD_CARGO_KG, scale_rot_inertia, scale_tire_stiffness, gen_empty_fingerprint
 from selfdrive.swaglog import cloudlog
 from selfdrive.car.interfaces import CarInterfaceBase
 
 class CarInterface(CarInterfaceBase):
+
+  def __init__(self, CP, CarController, CarState):
+    super().__init__(CP, CarController, CarState)
+    self.buttonStatesPrev = BUTTON_STATES.copy()
+    self.cruise_enabled_prev = False
 
   @staticmethod
   def compute_gb(accel, speed):
@@ -31,9 +36,9 @@ class CarInterface(CarInterfaceBase):
       stop_and_go = False
       ret.safetyParam = 100
       ret.wheelbase = 2.70
-      ret.steerRatio = 18.27
+      ret.steerRatio = 16.
       tire_stiffness_factor = 0.444  # not optimized yet
-      ret.mass = 2860. * CV.LB_TO_KG + STD_CARGO_KG  # mean between normal and hybrid
+      ret.mass = 4000. * CV.LB_TO_KG + STD_CARGO_KG  # mean between normal and hybrid
       ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.2], [0.05]]
       ret.lateralTuning.pid.kf = 0.00003   # full torque for 20 deg at 80mph means 0.00007818594
 
@@ -64,23 +69,17 @@ class CarInterface(CarInterfaceBase):
 
     # removing the DSU disables AEB and it's considered a community maintained feature
     # intercepting the DSU is a community feature since it requires unofficial hardware
-    ret.communityFeature = ret.enableGasInterceptor or ret.enableDsu or smartDsu
+    ret.communityFeature = False
 
     ret.longitudinalTuning.deadzoneBP = [0., 9.]
     ret.longitudinalTuning.deadzoneV = [0., .15]
     ret.longitudinalTuning.kpBP = [0., 5., 35.]
     ret.longitudinalTuning.kiBP = [0., 35.]
 
-    if ret.enableGasInterceptor:
-      ret.gasMaxBP = [0., 9., 35]
-      ret.gasMaxV = [0.2, 0.5, 0.7]
-      ret.longitudinalTuning.kpV = [1.2, 0.8, 0.5]
-      ret.longitudinalTuning.kiV = [0.18, 0.12]
-    else:
-      ret.gasMaxBP = [0.]
-      ret.gasMaxV = [0.5]
-      ret.longitudinalTuning.kpV = [3.6, 2.4, 1.5]
-      ret.longitudinalTuning.kiV = [0.54, 0.36]
+    ret.gasMaxBP = [0., 9., 35]
+    ret.gasMaxV = [0.2, 0.5, 0.7]
+    ret.longitudinalTuning.kpV = [1.2, 0.8, 0.5]
+    ret.longitudinalTuning.kiV = [0.18, 0.12]
 
     return ret
 
@@ -95,7 +94,14 @@ class CarInterface(CarInterfaceBase):
     ret.canValid = self.cp.can_valid and self.cp_cam.can_valid
     ret.yawRate = self.VM.yaw_rate(ret.steeringAngle * CV.DEG_TO_RAD, ret.vEgo)
     ret.steeringRateLimited = self.CC.steer_rate_limited if self.CC is not None else False
-    ret.buttonEvents = []
+    buttonEvents = []
+
+    for button in self.CS.buttonStates:
+      if self.CS.buttonStates[button] != self.buttonStatesPrev[button]:
+        be = car.CarState.ButtonEvent.new_message()
+        be.type = button
+        be.pressed = self.CS.buttonStates[button]
+        buttonEvents.append(be)
 
     # events
     events = self.create_common_events(ret)
@@ -109,8 +115,15 @@ class CarInterface(CarInterfaceBase):
         # while in standstill, send a user alert
         events.append(create_event('manualRestart', [ET.WARNING]))
 
-    ret.events = events
+    if ret.cruiseState.enabled and not self.cruise_enabled_prev:
+      events.append(create_event('pcmEnable', [ET.ENABLE]))
+    elif not ret.cruiseState.enabled:
+      events.append(create_event('pcmDisable', [ET.USER_DISABLE]))
 
+    ret.events = events
+    ret.buttonEvents = buttonEvents
+    self.buttonStatesPrev = self.buttonStatesPrev = self.CS.buttonStates.copy()
+    self.cruise_enabled_prev = ret.cruiseState.enabled
     self.CS.out = ret.as_reader()
     return self.CS.out
 

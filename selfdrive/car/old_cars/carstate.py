@@ -13,6 +13,8 @@ class CarState(CarStateBase):
     super().__init__(CP)
     can_define = CANDefine(DBC[CP.carFingerprint]['pt'])
     self.buttonStates = BUTTON_STATES.copy()
+    self.cruise_engaged = False
+    self.cruise_button_last = 0
 
     # On NO_DSU cars but not TSS2 cars the cp.vl["STEER_TORQUE_SENSOR"]['STEER_ANGLE']
     # is zeroed to where the steering angle is at start.
@@ -22,32 +24,25 @@ class CarState(CarStateBase):
   def update(self, cp, cp_cam):
     ret = car.CarState.new_message()
 
-    ret.doorOpen = False #any([cp.vl["SEATS_DOORS"]['DOOR_OPEN_FL'], cp.vl["SEATS_DOORS"]['DOOR_OPEN_FR'],
-    #                     cp.vl["SEATS_DOORS"]['DOOR_OPEN_RL'], cp.vl["SEATS_DOORS"]['DOOR_OPEN_RR']])
-    ret.seatbeltUnlatched = False #cp.vl["SEATS_DOORS"]['SEATBELT_DRIVER_UNLATCHED'] != 0
+    ret.doorOpen = False 
+    ret.seatbeltUnlatched = False
 
     ret.brakePressed = bool(cp_cam.vl["BRAKE_OUTPUT"]['BRAKE_PRESSED'])
     ret.brakeLights =  ret.brakePressed
 
     ret.gas = (cp_cam.vl["GAS_SENSOR"]['INTERCEPTOR_GAS'] + cp_cam.vl["GAS_SENSOR"]['INTERCEPTOR_GAS2']) / 2.
-    ret.gasPressed = ret.gas > 15
+    ret.gasPressed = ret.gas > 100
 
     ret.wheelSpeeds.fl = cp.vl["WHEEL_SPEEDS"]['WHEEL_FL'] * CV.KPH_TO_MS
     ret.wheelSpeeds.fr = cp.vl["WHEEL_SPEEDS"]['WHEEL_FR'] * CV.KPH_TO_MS
     ret.wheelSpeeds.rl = cp.vl["WHEEL_SPEEDS"]['WHEEL_RL'] * CV.KPH_TO_MS
     ret.wheelSpeeds.rr = cp.vl["WHEEL_SPEEDS"]['WHEEL_RR'] * CV.KPH_TO_MS
-    invalid_wheelspeeds = [
-      cp.vl["WHEEL_SPEEDS"]['SENSOR_FL'],
-      cp.vl["WHEEL_SPEEDS"]['SENSOR_FR'],
-      cp.vl["WHEEL_SPEEDS"]['SENSOR_RL'],
-      cp.vl["WHEEL_SPEEDS"]['SENSOR_RR'],
-    ]
-    valid_wheelspeeds = []
-    for e, wheelspeed in zip(invalid_wheelspeeds, [ret.wheelSpeeds.fl, ret.wheelSpeeds.fr, ret.wheelSpeeds.rl, ret.wheelSpeeds.rr]):
-      if e:
-        valid_wheelspeeds.append(wheelspeed)   
-    if valid_wheelspeeds:   
-      ret.vEgoRaw = mean(valid_wheelspeeds)
+
+    ret.vEgoRaw = mean([ret.wheelSpeeds.fl,
+                        ret.wheelSpeeds.fr,
+                        ret.wheelSpeeds.rl,
+                        ret.wheelSpeeds.rr])
+
     ret.vEgo, ret.aEgo = self.update_speed_kf(ret.vEgoRaw)
 
     ret.standstill = ret.vEgoRaw < 0.001
@@ -59,15 +54,27 @@ class CarState(CarStateBase):
     ret.leftBlinker = False
     ret.rightBlinker = False
 
-    ret.steeringTorque = cp.vl["STEER_TORQUE"]['DRIVER_TORQUE'] * (cp.vl["STEER_TORQUE"]["DIRECTION"] * -1)
-    ret.steeringTorqueEps = 0 #cp.vl["STEER_TORQUE_SENSOR"]['STEER_TORQUE_EPS']
-    # we could use the override bit from dbc, but it's triggered at too high torque values
+    steer_dir = (cp.vl["STEER_TORQUE"]["DIRECTION"] * 2) + 1
+    tq1 = cp_cam.vl["STEER_SENSOR"]['DRIVER_TORQUE'] - 1680.
+    tq2 = cp_cam.vl["STEER_SENSOR"]['MOTOR_DUTY'] - 1615.
+
+    ret.steeringTorque = round((tq1 + (tq2 * -1)) / 4)
+    
+    ret.steeringTorqueEps = cp.vl["STEER_TORQUE"]['DRIVER_TORQUE'] * steer_dir
+
     ret.steeringPressed = abs(ret.steeringTorque) > STEER_THRESHOLD
+
     # cruise magic
     ret.cruiseState.available = True # cp.vl["PCM_CRUISE"]['MAIN_ON'] != 0
-    ret.cruiseState.enabled = True #bool(cp.vl["PCM_CRUISE"]['ENGAGED'])
     cruise_button = bool(cp.vl["CRUISE_BUTTONS"]["CANCEL"])
-    ret.cruiseState.enabled = cruise_button
+
+    if cruise_button is not self.cruise_button_last:
+      self.cruise_engaged = not self.cruise_engaged
+
+    self.cruise_button_last = cruise_button
+
+    ret.cruiseState.enabled = self.cruise_engaged
+    
     if ret.cruiseState.enabled:
       self.buttonStates["accelCruise"] = bool(cp.vl["CRUISE_BUTTONS"]['SET_PLUS'])
       self.buttonStates["decelCruise"] = bool(cp.vl["CRUISE_BUTTONS"]['SET_MINUS'])
