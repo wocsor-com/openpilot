@@ -16,11 +16,6 @@ class CarState(CarStateBase):
     self.cruise_engaged = False
     self.cruise_button_last = 0
 
-    # On NO_DSU cars but not TSS2 cars the cp.vl["STEER_TORQUE_SENSOR"]['STEER_ANGLE']
-    # is zeroed to where the steering angle is at start.
-    # Need to apply an offset as soon as the steering angle measurements are both received
-    self.angle_offset = 0.
-
   def update(self, cp, cp_cam):
     ret = car.CarState.new_message()
 
@@ -133,6 +128,7 @@ class CarState(CarStateBase):
     ]
 
     checks = [
+      ("WHEEL_SPEEDS", 50),
     ]
 
     return CANParser(DBC[CP.carFingerprint]['pt'], signals, checks, 0)
@@ -141,7 +137,6 @@ class CarState(CarStateBase):
   def get_cam_can_parser(CP):
     # bus 2
     signals = [
-      ("SENSOR", "BRAKE_OUTPUT", 0),
       ("INTERCEPTOR_GAS", "GAS_SENSOR", 0),
       ("INTERCEPTOR_GAS2", "GAS_SENSOR", 0),
       ("DRIVER_TORQUE", "STEER_SENSOR", 0),
@@ -153,6 +148,8 @@ class CarState(CarStateBase):
       ("brake_report_enabled", "BRAKE_REPORT", 0),
       ("BRAKE_PRESSED", "BRAKE_OUTPUT", 0),
     ]
-    checks = [("STEER_SENSOR", 50)]
+    checks = [
+      ("STEER_SENSOR", 50),
+      ]
 
     return CANParser(DBC[CP.carFingerprint]['pt'], signals, checks, 2)
