@@ -63,10 +63,6 @@ class CarController():
 
     brake_pressure = CS.brake_pressure
     
-
-
-    print(brake_pressure, apply_brake * 176)
-
     can_sends = []
 
     #*** control msgs ***
