@@ -362,6 +362,10 @@ void ignition_can_hook(CAN_FIFOMailBox_TypeDef *to_push) {
       // GTW_status
       ignition_can = (GET_BYTE(to_push, 0) & 0x1) != 0;
     }
+    if ((addr == 0x1c0) && (len == 8)){
+      //FORD IGN
+      ignition_can = (GET_BYTE(to_push, 0) & 0x4) != 0;
+    }
   }
 }
 

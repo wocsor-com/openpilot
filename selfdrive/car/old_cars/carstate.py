@@ -116,8 +116,8 @@ class CarState(CarStateBase):
 
     ret.espDisabled = False
     # 2 is standby, 10 is active. TODO: check that everything else is really a faulty state
-    self.steer_state = 10. # cp.vl["EPS_STATUS"]['LKA_STATE']
-    self.steer_warning = 0 # cp.vl["EPS_STATUS"]['LKA_STATE'] not in [1, 5]
+    self.steer_state = cp_cam.vl["STEER_SENSOR"]['STATE'] # cp.vl["EPS_STATUS"]['LKA_STATE']
+    self.steer_warning = cp_cam.vl["STEER_SENSOR"]['STATE'] > 0 # cp.vl["EPS_STATUS"]['LKA_STATE'] not in [1, 5]
     self.brake_pressure = cp.vl["BRAKE_MODULE"]['BRAKE_PRESSURE']
 
     return ret
