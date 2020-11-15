@@ -8,12 +8,11 @@ from panda_jungle import PandaJungle  # pylint: disable=import-error
 from nose.tools import assert_equal
 from parameterized import parameterized, param
 from .timeout import run_with_timeout
-from .wifi_helpers import _connect_wifi
 
 SPEED_NORMAL = 500
 SPEED_GMLAN = 33.3
 BUS_SPEEDS = [(0, SPEED_NORMAL), (1, SPEED_NORMAL), (2, SPEED_NORMAL), (3, SPEED_GMLAN)]
-TIMEOUT = 30
+TIMEOUT = 45
 GEN2_HW_TYPES = [Panda.HW_TYPE_BLACK_PANDA, Panda.HW_TYPE_UNO]
 GPS_HW_TYPES = [Panda.HW_TYPE_GREY_PANDA, Panda.HW_TYPE_BLACK_PANDA, Panda.HW_TYPE_UNO]
 
@@ -41,16 +40,17 @@ init_panda_serials()
 test_all_types = parameterized([
     param(panda_type=Panda.HW_TYPE_WHITE_PANDA),
     param(panda_type=Panda.HW_TYPE_GREY_PANDA),
-    param(panda_type=Panda.HW_TYPE_BLACK_PANDA)
+    param(panda_type=Panda.HW_TYPE_BLACK_PANDA),
+    param(panda_type=Panda.HW_TYPE_UNO)
   ])
 test_all_pandas = parameterized(
-    list(map(lambda x: x[0], _panda_serials))
+    list(map(lambda x: x[0], _panda_serials))  # type: ignore
   )
 test_all_gen2_pandas = parameterized(
-    list(map(lambda x: x[0], filter(lambda x: x[1] in GEN2_HW_TYPES, _panda_serials)))
+    list(map(lambda x: x[0], filter(lambda x: x[1] in GEN2_HW_TYPES, _panda_serials)))  # type: ignore
   )
 test_all_gps_pandas = parameterized(
-    list(map(lambda x: x[0], filter(lambda x: x[1] in GPS_HW_TYPES, _panda_serials)))
+    list(map(lambda x: x[0], filter(lambda x: x[1] in GPS_HW_TYPES, _panda_serials)))  # type: ignore
   )
 test_white_and_grey = parameterized([
     param(panda_type=Panda.HW_TYPE_WHITE_PANDA),
@@ -65,13 +65,9 @@ test_grey = parameterized([
 test_black = parameterized([
     param(panda_type=Panda.HW_TYPE_BLACK_PANDA)
   ])
-
-def connect_wifi(serial=None):
-  p = Panda(serial=serial)
-  p.set_esp_power(True)
-  dongle_id, pw = p.get_serial()
-  assert(dongle_id.isalnum())
-  _connect_wifi(dongle_id, pw)
+test_uno = parameterized([
+    param(panda_type=Panda.HW_TYPE_UNO)
+  ])
 
 def time_many_sends(p, bus, p_recv=None, msg_count=100, msg_id=None, two_pandas=False):
   if p_recv == None:
@@ -82,10 +78,10 @@ def time_many_sends(p, bus, p_recv=None, msg_count=100, msg_id=None, two_pandas=
     raise ValueError("Cannot have two pandas that are the same panda")
 
   start_time = time.time()
-  p.can_send_many([(msg_id, 0, b"\xaa"*8, bus)]*msg_count)
+  p.can_send_many([(msg_id, 0, b"\xaa" * 8, bus)] * msg_count)
   r = []
   r_echo = []
-  r_len_expected = msg_count if two_pandas else msg_count*2
+  r_len_expected = msg_count if two_pandas else msg_count * 2
   r_echo_len_exected = msg_count if two_pandas else 0
 
   while len(r) < r_len_expected and (time.time() - start_time) < 5:
@@ -105,14 +101,14 @@ def time_many_sends(p, bus, p_recv=None, msg_count=100, msg_id=None, two_pandas=
   assert_equal(len(resp), msg_count)
   assert_equal(len(sent_echo), msg_count)
 
-  end_time = (end_time-start_time)*1000.0
-  comp_kbps = (1+11+1+1+1+4+8*8+15+1+1+1+7)*msg_count / end_time
+  end_time = (end_time - start_time) * 1000.0
+  comp_kbps = (1 + 11 + 1 + 1 + 1 + 4 + 8 * 8 + 15 + 1 + 1 + 1 + 7) * msg_count / end_time
 
   return comp_kbps
 
 def reset_pandas():
   panda_jungle.set_panda_power(False)
-  time.sleep(2)
+  time.sleep(3)
   panda_jungle.set_panda_power(True)
   time.sleep(5)
 
@@ -198,7 +194,7 @@ def panda_connect_and_init(fn):
     finally:
       # Close all connections
       for panda in pandas:
-        panda.close()        
+        panda.close()
   return wrapper
 
 def clear_can_buffers(panda):

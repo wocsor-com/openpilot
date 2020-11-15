@@ -1,7 +1,11 @@
+import os
 import abc
 import struct
 import unittest
-from opendbc.can.packer import CANPacker # pylint: disable=import-error
+import importlib
+import numpy as np
+from typing import Optional, List, Dict
+from opendbc.can.packer import CANPacker  # pylint: disable=import-error
 from panda.tests.safety import libpandasafety_py
 
 MAX_WRONG_COUNTERS = 5
@@ -11,12 +15,6 @@ class UNSAFE_MODE:
   DISABLE_DISENGAGE_ON_GAS = 1
   DISABLE_STOCK_AEB = 2
   RAISE_LONGITUDINAL_LIMITS_TO_ISO_MAX = 8
-
-def twos_comp(val, bits):
-  if val >= 0:
-    return val
-  else:
-    return (2**bits) + val
 
 def package_can_msg(msg):
   addr, _, dat, bus = msg
@@ -34,31 +32,19 @@ def package_can_msg(msg):
   return ret
 
 def make_msg(bus, addr, length=8):
-  return package_can_msg([addr, 0, b'\x00'*length, bus])
-
-def interceptor_msg(gas, addr):
-  to_send = make_msg(0, addr, 6)
-  gas2 = gas * 2
-  to_send[0].RDLR = ((gas & 0xff) << 8) | ((gas & 0xff00) >> 8) | \
-                    ((gas2 & 0xff) << 24) | ((gas2 & 0xff00) << 8)
-  return to_send
+  return package_can_msg([addr, 0, b'\x00' * length, bus])
 
 class CANPackerPanda(CANPacker):
-  def make_can_msg_panda(self, name_or_addr, bus, values, counter=-1):
+  def make_can_msg_panda(self, name_or_addr, bus, values, counter=-1, fix_checksum=None):
     msg = self.make_can_msg(name_or_addr, bus, values, counter=-1)
+    if fix_checksum is not None:
+      msg = fix_checksum(msg)
     return package_can_msg(msg)
 
-class PandaSafetyTest(unittest.TestCase):
-  TX_MSGS = None
-  STANDSTILL_THRESHOLD = None
-  RELAY_MALFUNCTION_ADDR = None
-  RELAY_MALFUNCTION_BUS = None
-  FWD_BLACKLISTED_ADDRS = {} # {bus: [addr]}
-  FWD_BUS_LOOKUP = {}
-
+class PandaSafetyTestBase(unittest.TestCase):
   @classmethod
   def setUpClass(cls):
-    if cls.__name__ == "PandaSafetyTest":
+    if cls.__name__ == "PandaSafetyTestBase":
       cls.safety = None
       raise unittest.SkipTest
 
@@ -67,6 +53,216 @@ class PandaSafetyTest(unittest.TestCase):
 
   def _tx(self, msg):
     return self.safety.safety_tx_hook(msg)
+
+class InterceptorSafetyTest(PandaSafetyTestBase):
+
+  INTERCEPTOR_THRESHOLD = 0
+
+  @classmethod
+  def setUpClass(cls):
+    if cls.__name__ == "InterceptorSafetyTest":
+      cls.safety = None
+      raise unittest.SkipTest
+
+  @abc.abstractmethod
+  def _interceptor_msg(self, gas, addr):
+    pass
+
+  def test_prev_gas_interceptor(self):
+    self._rx(self._interceptor_msg(0x0, 0x201))
+    self.assertFalse(self.safety.get_gas_interceptor_prev())
+    self._rx(self._interceptor_msg(0x1000, 0x201))
+    self.assertTrue(self.safety.get_gas_interceptor_prev())
+    self._rx(self._interceptor_msg(0x0, 0x201))
+    self.safety.set_gas_interceptor_detected(False)
+
+  def test_disengage_on_gas_interceptor(self):
+    for g in range(0, 0x1000):
+      self._rx(self._interceptor_msg(0, 0x201))
+      self.safety.set_controls_allowed(True)
+      self._rx(self._interceptor_msg(g, 0x201))
+      remain_enabled = g <= self.INTERCEPTOR_THRESHOLD
+      self.assertEqual(remain_enabled, self.safety.get_controls_allowed())
+      self._rx(self._interceptor_msg(0, 0x201))
+      self.safety.set_gas_interceptor_detected(False)
+
+  def test_unsafe_mode_no_disengage_on_gas_interceptor(self):
+    self.safety.set_controls_allowed(True)
+    self.safety.set_unsafe_mode(UNSAFE_MODE.DISABLE_DISENGAGE_ON_GAS)
+    for g in range(0, 0x1000):
+      self._rx(self._interceptor_msg(g, 0x201))
+      self.assertTrue(self.safety.get_controls_allowed())
+      self._rx(self._interceptor_msg(0, 0x201))
+      self.safety.set_gas_interceptor_detected(False)
+    self.safety.set_unsafe_mode(UNSAFE_MODE.DEFAULT)
+
+  def test_allow_engage_with_gas_interceptor_pressed(self):
+    self._rx(self._interceptor_msg(0x1000, 0x201))
+    self.safety.set_controls_allowed(1)
+    self._rx(self._interceptor_msg(0x1000, 0x201))
+    self.assertTrue(self.safety.get_controls_allowed())
+    self._rx(self._interceptor_msg(0, 0x201))
+
+  def test_gas_interceptor_safety_check(self):
+    for gas in np.arange(0, 4000, 100):
+      for controls_allowed in [True, False]:
+        self.safety.set_controls_allowed(controls_allowed)
+        if controls_allowed:
+          send = True
+        else:
+          send = gas == 0
+        self.assertEqual(send, self._tx(self._interceptor_msg(gas, 0x200)))
+
+
+class TorqueSteeringSafetyTest(PandaSafetyTestBase):
+
+  MAX_RATE_UP = 0
+  MAX_RATE_DOWN = 0
+  MAX_TORQUE = 0
+  MAX_RT_DELTA = 0
+  RT_INTERVAL = 0
+  MAX_TORQUE_ERROR = 0
+  TORQUE_MEAS_TOLERANCE = 0
+
+  @classmethod
+  def setUpClass(cls):
+    if cls.__name__ == "TorqueSteeringSafetyTest":
+      cls.safety = None
+      raise unittest.SkipTest
+
+  @abc.abstractmethod
+  def _torque_meas_msg(self, torque):
+    pass
+
+  @abc.abstractmethod
+  def _torque_msg(self, torque):
+    pass
+
+  def _set_prev_torque(self, t):
+    self.safety.set_desired_torque_last(t)
+    self.safety.set_rt_torque_last(t)
+    self.safety.set_torque_meas(t, t)
+
+  def test_steer_safety_check(self):
+    for enabled in [0, 1]:
+      for t in range(-self.MAX_TORQUE * 2, self.MAX_TORQUE * 2):
+        self.safety.set_controls_allowed(enabled)
+        self._set_prev_torque(t)
+        if abs(t) > self.MAX_TORQUE or (not enabled and abs(t) > 0):
+          self.assertFalse(self._tx(self._torque_msg(t)))
+        else:
+          self.assertTrue(self._tx(self._torque_msg(t)))
+
+  def test_torque_absolute_limits(self):
+    for controls_allowed in [True, False]:
+      for torque in np.arange(-self.MAX_TORQUE - 1000, self.MAX_TORQUE + 1000, self.MAX_RATE_UP):
+        self.safety.set_controls_allowed(controls_allowed)
+        self.safety.set_rt_torque_last(torque)
+        self.safety.set_torque_meas(torque, torque)
+        self.safety.set_desired_torque_last(torque - self.MAX_RATE_UP)
+
+        if controls_allowed:
+          send = (-self.MAX_TORQUE <= torque <= self.MAX_TORQUE)
+        else:
+          send = torque == 0
+
+        self.assertEqual(send, self._tx(self._torque_msg(torque)))
+
+  def test_non_realtime_limit_up(self):
+    self.safety.set_controls_allowed(True)
+
+    self._set_prev_torque(0)
+    self.assertTrue(self._tx(self._torque_msg(self.MAX_RATE_UP)))
+
+    self._set_prev_torque(0)
+    self.assertFalse(self._tx(self._torque_msg(self.MAX_RATE_UP + 1)))
+
+  def test_non_realtime_limit_down(self):
+    self.safety.set_controls_allowed(True)
+
+    torque_meas = self.MAX_TORQUE - self.MAX_TORQUE_ERROR - 50
+
+    self.safety.set_rt_torque_last(self.MAX_TORQUE)
+    self.safety.set_torque_meas(torque_meas, torque_meas)
+    self.safety.set_desired_torque_last(self.MAX_TORQUE)
+    self.assertTrue(self._tx(self._torque_msg(self.MAX_TORQUE - self.MAX_RATE_DOWN)))
+
+    self.safety.set_rt_torque_last(self.MAX_TORQUE)
+    self.safety.set_torque_meas(torque_meas, torque_meas)
+    self.safety.set_desired_torque_last(self.MAX_TORQUE)
+    self.assertFalse(self._tx(self._torque_msg(self.MAX_TORQUE - self.MAX_RATE_DOWN + 1)))
+
+  def test_exceed_torque_sensor(self):
+    self.safety.set_controls_allowed(True)
+
+    for sign in [-1, 1]:
+      self._set_prev_torque(0)
+      for t in np.arange(0, self.MAX_TORQUE_ERROR + 2, 2):  # step needs to be smaller than MAX_TORQUE_ERROR
+        t *= sign
+        self.assertTrue(self._tx(self._torque_msg(t)))
+
+      self.assertFalse(self._tx(self._torque_msg(sign * (self.MAX_TORQUE_ERROR + 2))))
+
+  def test_realtime_limit_up(self):
+    self.safety.set_controls_allowed(True)
+
+    for sign in [-1, 1]:
+      self.safety.init_tests()
+      self._set_prev_torque(0)
+      for t in np.arange(0, self.MAX_RT_DELTA + 1, 1):
+        t *= sign
+        self.safety.set_torque_meas(t, t)
+        self.assertTrue(self._tx(self._torque_msg(t)))
+      self.assertFalse(self._tx(self._torque_msg(sign * (self.MAX_RT_DELTA + 1))))
+
+      self._set_prev_torque(0)
+      for t in np.arange(0, self.MAX_RT_DELTA + 1, 1):
+        t *= sign
+        self.safety.set_torque_meas(t, t)
+        self.assertTrue(self._tx(self._torque_msg(t)))
+
+      # Increase timer to update rt_torque_last
+      self.safety.set_timer(self.RT_INTERVAL + 1)
+      self.assertTrue(self._tx(self._torque_msg(sign * self.MAX_RT_DELTA)))
+      self.assertTrue(self._tx(self._torque_msg(sign * (self.MAX_RT_DELTA + 1))))
+
+  def test_torque_measurements(self):
+    trq = 50
+    for t in [trq, -trq, 0, 0, 0, 0]:
+      self._rx(self._torque_meas_msg(t))
+
+    max_range = range(trq, trq + self.TORQUE_MEAS_TOLERANCE + 1)
+    min_range = range(-(trq + self.TORQUE_MEAS_TOLERANCE), -trq + 1)
+    self.assertTrue(self.safety.get_torque_meas_min() in min_range)
+    self.assertTrue(self.safety.get_torque_meas_max() in max_range)
+
+    max_range = range(0, self.TORQUE_MEAS_TOLERANCE + 1)
+    min_range = range(-(trq + self.TORQUE_MEAS_TOLERANCE), -trq + 1)
+    self._rx(self._torque_meas_msg(0))
+    self.assertTrue(self.safety.get_torque_meas_min() in min_range)
+    self.assertTrue(self.safety.get_torque_meas_max() in max_range)
+
+    max_range = range(0, self.TORQUE_MEAS_TOLERANCE + 1)
+    min_range = range(-self.TORQUE_MEAS_TOLERANCE, 0 + 1)
+    self._rx(self._torque_meas_msg(0))
+    self.assertTrue(self.safety.get_torque_meas_min() in min_range)
+    self.assertTrue(self.safety.get_torque_meas_max() in max_range)
+
+
+class PandaSafetyTest(PandaSafetyTestBase):
+  TX_MSGS: Optional[List[List[int]]] = None
+  STANDSTILL_THRESHOLD: Optional[float] = None
+  GAS_PRESSED_THRESHOLD = 0
+  RELAY_MALFUNCTION_ADDR: Optional[int] = None
+  RELAY_MALFUNCTION_BUS: Optional[int] = None
+  FWD_BLACKLISTED_ADDRS: Dict[int, List[int]] = {}  # {bus: [addr]}
+  FWD_BUS_LOOKUP: Dict[int, int] = {}
+
+  @classmethod
+  def setUpClass(cls):
+    if cls.__name__ == "PandaSafetyTest":
+      cls.safety = None
+      raise unittest.SkipTest
 
   @abc.abstractmethod
   def _brake_msg(self, brake):
@@ -77,7 +273,7 @@ class PandaSafetyTest(unittest.TestCase):
     pass
 
   @abc.abstractmethod
-  def _gas_msg(self, speed):
+  def _gas_msg(self, gas):
     pass
 
   @abc.abstractmethod
@@ -126,11 +322,9 @@ class PandaSafetyTest(unittest.TestCase):
 
   def test_prev_gas(self):
     self.assertFalse(self.safety.get_gas_pressed_prev())
-    for pressed in [True, False]:
-      self._rx(self._gas_msg(not pressed))
-      self.assertEqual(not pressed, self.safety.get_gas_pressed_prev())
+    for pressed in [self.GAS_PRESSED_THRESHOLD + 1, 0]:
       self._rx(self._gas_msg(pressed))
-      self.assertEqual(pressed, self.safety.get_gas_pressed_prev())
+      self.assertEqual(bool(pressed), self.safety.get_gas_pressed_prev())
 
   def test_allow_engage_with_gas_pressed(self):
     self._rx(self._gas_msg(1))
@@ -143,14 +337,14 @@ class PandaSafetyTest(unittest.TestCase):
   def test_disengage_on_gas(self):
     self._rx(self._gas_msg(0))
     self.safety.set_controls_allowed(True)
-    self._rx(self._gas_msg(1))
+    self._rx(self._gas_msg(self.GAS_PRESSED_THRESHOLD + 1))
     self.assertFalse(self.safety.get_controls_allowed())
 
   def test_unsafe_mode_no_disengage_on_gas(self):
     self._rx(self._gas_msg(0))
     self.safety.set_controls_allowed(True)
     self.safety.set_unsafe_mode(UNSAFE_MODE.DISABLE_DISENGAGE_ON_GAS)
-    self._rx(self._gas_msg(1))
+    self._rx(self._gas_msg(self.GAS_PRESSED_THRESHOLD + 1))
     self.assertTrue(self.safety.get_controls_allowed())
 
   def test_prev_brake(self):
@@ -171,6 +365,13 @@ class PandaSafetyTest(unittest.TestCase):
     self.safety.set_controls_allowed(1)
     self._rx(self._pcm_status_msg(False))
     self.assertFalse(self.safety.get_controls_allowed())
+
+  def test_cruise_engaged_prev(self):
+    for engaged in [True, False]:
+      self._rx(self._pcm_status_msg(engaged))
+      self.assertEqual(engaged, self.safety.get_cruise_engaged_prev())
+      self._rx(self._pcm_status_msg(not engaged))
+      self.assertEqual(not engaged, self.safety.get_cruise_engaged_prev())
 
   def test_allow_brake_at_zero_speed(self):
     # Brake was already pressed
@@ -198,59 +399,42 @@ class PandaSafetyTest(unittest.TestCase):
     self.assertFalse(self.safety.get_controls_allowed())
     self._rx(self._speed_msg(0))
 
-# TODO: use PandaSafetyTest for all tests and delete this
-class StdTest:
-  @staticmethod
-  def test_relay_malfunction(test, addr, bus=0):
-    # input is a test class and the address that, if seen on specified bus, triggers
-    # the relay_malfunction protection logic: both tx_hook and fwd_hook are
-    # expected to return failure
-    test.assertFalse(test.safety.get_relay_malfunction())
-    test.safety.safety_rx_hook(make_msg(bus, addr, 8))
-    test.assertTrue(test.safety.get_relay_malfunction())
-    for a in range(1, 0x800):
-      for b in range(0, 3):
-        test.assertFalse(test.safety.safety_tx_hook(make_msg(b, a, 8)))
-        test.assertEqual(-1, test.safety.safety_fwd_hook(b, make_msg(b, a, 8)))
+  def test_sample_speed(self):
+    self.assertFalse(self.safety.get_vehicle_moving())
 
-  @staticmethod
-  def test_manually_enable_controls_allowed(test):
-    test.safety.set_controls_allowed(1)
-    test.assertTrue(test.safety.get_controls_allowed())
-    test.safety.set_controls_allowed(0)
-    test.assertFalse(test.safety.get_controls_allowed())
+    # not moving
+    self.safety.safety_rx_hook(self._speed_msg(0))
+    self.assertFalse(self.safety.get_vehicle_moving())
 
-  @staticmethod
-  def test_spam_can_buses(test, TX_MSGS):
-    for addr in range(1, 0x800):
-      for bus in range(0, 4):
-        if all(addr != m[0] or bus != m[1] for m in TX_MSGS):
-          test.assertFalse(test.safety.safety_tx_hook(make_msg(bus, addr, 8)))
+    # speed is at threshold
+    self.safety.safety_rx_hook(self._speed_msg(self.STANDSTILL_THRESHOLD))
+    self.assertFalse(self.safety.get_vehicle_moving())
 
-  @staticmethod
-  def test_allow_brake_at_zero_speed(test):
-    # Brake was already pressed
-    test.safety.safety_rx_hook(test._speed_msg(0))
-    test.safety.safety_rx_hook(test._brake_msg(1))
-    test.safety.set_controls_allowed(1)
-    test.safety.safety_rx_hook(test._brake_msg(1))
-    test.assertTrue(test.safety.get_controls_allowed())
-    test.safety.safety_rx_hook(test._brake_msg(0))
-    test.assertTrue(test.safety.get_controls_allowed())
-    # rising edge of brake should disengage
-    test.safety.safety_rx_hook(test._brake_msg(1))
-    test.assertFalse(test.safety.get_controls_allowed())
-    test.safety.safety_rx_hook(test._brake_msg(0))  # reset no brakes
+    # past threshold
+    self.safety.safety_rx_hook(self._speed_msg(self.STANDSTILL_THRESHOLD + 1))
+    self.assertTrue(self.safety.get_vehicle_moving())
 
-  @staticmethod
-  def test_not_allow_brake_when_moving(test, standstill_threshold):
-    # Brake was already pressed
-    test.safety.safety_rx_hook(test._brake_msg(1))
-    test.safety.set_controls_allowed(1)
-    test.safety.safety_rx_hook(test._speed_msg(standstill_threshold))
-    test.safety.safety_rx_hook(test._brake_msg(1))
-    test.assertTrue(test.safety.get_controls_allowed())
-    test.safety.safety_rx_hook(test._speed_msg(standstill_threshold + 1))
-    test.safety.safety_rx_hook(test._brake_msg(1))
-    test.assertFalse(test.safety.get_controls_allowed())
-    test.safety.safety_rx_hook(test._speed_msg(0))
+  def test_tx_hook_on_wrong_safety_mode(self):
+    files = os.listdir(os.path.dirname(os.path.realpath(__file__)))
+    test_files = [f for f in files if f.startswith("test_") and f.endswith(".py")]
+
+    current_test = self.__class__.__name__
+
+    all_tx = []
+    for tf in test_files:
+      test = importlib.import_module("panda.tests.safety."+tf[:-3])
+      for attr in dir(test):
+        if attr.startswith("Test") and attr != current_test:
+          tx = getattr(getattr(test, attr), "TX_MSGS")
+          if tx is not None:
+            all_tx.append(tx)
+
+    # make sure we got all the msgs
+    self.assertTrue(len(all_tx) >= len(test_files)-1)
+
+    for tx_msgs in all_tx:
+      for addr, bus in tx_msgs:
+        msg = make_msg(addr, bus)
+        self.safety.set_controls_allowed(1)
+        self.assertFalse(self._tx(msg))
+

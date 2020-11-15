@@ -1,4 +1,4 @@
-#-*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 
 """
     Panda CAN Controller Dongle
@@ -41,18 +41,18 @@ setup(
   author_email='',
   packages=[
     'panda',
-    ],
-  package_dir = {'panda': 'python'},
+  ],
+  package_dir={'panda': 'python'},
   platforms='any',
   license='MIT',
   install_requires=[
     'libusb1 == 1.6.6',
     'hexdump >= 3.3',
-    'pycrypto >= 2.6.1',
+    'pycryptodome >= 3.9.8',
     'tqdm >= 4.14.0',
     'requests'
   ],
-  ext_modules = [],
+  ext_modules=[],
   description="Code powering the comma.ai panda",
   long_description='See https://github.com/commaai/panda',
   classifiers=[

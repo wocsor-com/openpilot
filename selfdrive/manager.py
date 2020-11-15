@@ -188,6 +188,8 @@ managed_processes = {
   "dmonitoringmodeld": ("selfdrive/modeld", ["./dmonitoringmodeld"]),
   "modeld": ("selfdrive/modeld", ["./modeld"]),
   "driverview": "selfdrive.controls.lib.driverview",
+  "librevision_logger": "selfdrive.librevision.logger",
+  "librevision_uploader": "selfdrive.librevision.uploader",
 }
 
 daemon_processes = {
@@ -213,12 +215,13 @@ green_temp_processes = ['uploader']
 persistent_processes = [
   'thermald',
   'logmessaged',
-  'ui',
-  'uploader',
+  #'uploader',
+  'librevision_uploader',
 ]
 
 if ANDROID:
   persistent_processes += [
+    'ui',
     'logcatd',
     'tombstoned',
     'updated',
@@ -227,21 +230,22 @@ if ANDROID:
 car_started_processes = [
   'controlsd',
   'plannerd',
-  'loggerd',
+  #'loggerd',
   'radard',
-  'dmonitoringd',
+  #'dmonitoringd',
   'calibrationd',
   'paramsd',
-  'camerad',
-  'modeld',
+  #'camerad',
+  #'modeld',
   'proclogd',
   'ubloxd',
   'locationd',
+  'librevision_logger',
 ]
 
 if WEBCAM:
   car_started_processes += [
-    'dmonitoringmodeld',
+    #'dmonitoringmodeld',
   ]
 
 if ANDROID:

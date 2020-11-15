@@ -34,7 +34,7 @@ if __name__ == "__main__":
   values = None
   if args.values:
     values = [s.strip().split(".") for s in args.values.split(",")]
-
+    print (values)
   while 1:
     polld = poller.poll(1000)
     for sock in polld:
